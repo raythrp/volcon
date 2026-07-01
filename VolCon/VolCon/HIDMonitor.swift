@@ -114,7 +114,8 @@ extension HIDMonitor {
         } else if transportType == "USB" {
             let vid = (IOHIDDeviceGetProperty(device, kIOHIDVendorIDKey as CFString) as? Int) ?? 0
             let pid = (IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? Int) ?? 0
-            return .usb(vid: vid, pid: pid)
+            let name = (IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String) ?? ""
+            return .usb(vid: vid, pid: pid, productName: name)
         } else {
             return .fallback("BuiltIn")
         }
