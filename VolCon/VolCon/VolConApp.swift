@@ -15,17 +15,51 @@ struct VolConApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
+    private var volumeResetTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Dynamically hide the dock icon (equivalent to LSUIElement = true)
         NSApp.setActivationPolicy(.accessory)
-        
+
         setupMenuBar()
         requestAccessibilityPermissions()
-        
-        // Initialize Core Components
+
         _ = AudioStateManager.shared
         HIDMonitor.shared.startMonitoring()
+
+        NotificationCenter.default.addObserver(self, selector: #selector(handleVolumeChange(_:)), name: .volumeDidChange, object: nil)
+    }
+
+    @objc private func handleVolumeChange(_ notification: Notification) {
+        guard let volume = notification.userInfo?["volume"] as? Float32 else { return }
+        showVolumeBadge(volume: volume)
+    }
+
+    private func showVolumeBadge(volume: Float32) {
+        let symbolName: String
+        switch volume {
+        case 0:          symbolName = "speaker.slash.fill"
+        case ..<0.34:    symbolName = "speaker.wave.1.fill"
+        case ..<0.67:    symbolName = "speaker.wave.2.fill"
+        default:         symbolName = "speaker.wave.3.fill"
+        }
+
+        if let button = statusItem?.button {
+            button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "VolCon")
+            button.title = " \(Int(volume * 100))%"
+            button.imagePosition = .imageLeft
+        }
+
+        volumeResetTimer?.invalidate()
+        volumeResetTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
+            self?.resetMenuBarIcon()
+        }
+    }
+
+    private func resetMenuBarIcon() {
+        if let button = statusItem?.button {
+            button.image = NSImage(systemSymbolName: "speaker.wave.3.fill", accessibilityDescription: "VolCon")
+            button.title = ""
+        }
     }
     
     private func setupMenuBar() {

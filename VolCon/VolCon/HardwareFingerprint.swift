@@ -22,4 +22,26 @@ struct HardwareFingerprint: Equatable {
     static func fallback(_ id: String) -> HardwareFingerprint {
         return HardwareFingerprint(macAddress: nil, vendorID: nil, productID: nil, fallbackID: id)
     }
+
+    /// Returns true if this fingerprint is identifiable within the given CoreAudio device UID string.
+    func matches(uid: String) -> Bool {
+        let uppercaseUID = uid.uppercased()
+
+        if let mac = macAddress {
+            // macAddress is already stripped of separators (see bluetooth() factory).
+            // Strip separators from the UID too before checking containment.
+            let cleanUID = uppercaseUID
+                .replacingOccurrences(of: "-", with: "")
+                .replacingOccurrences(of: ":", with: "")
+            return cleanUID.contains(mac)
+        } else if let vid = vendorID, let pid = productID {
+            let vidHex = String(format: "%04X", vid)
+            let pidHex = String(format: "%04X", pid)
+            return uppercaseUID.contains(vidHex) && uppercaseUID.contains(pidHex)
+        } else if let fallback = fallbackID {
+            return uppercaseUID.contains(fallback.uppercased())
+        }
+
+        return false
+    }
 }
