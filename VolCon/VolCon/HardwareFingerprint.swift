@@ -23,6 +23,8 @@ struct HardwareFingerprint: Equatable {
         return HardwareFingerprint(macAddress: nil, vendorID: nil, productID: nil, fallbackID: id)
     }
 
+    var isBuiltIn: Bool { fallbackID != nil }
+
     /// Returns true if this fingerprint is identifiable within the given CoreAudio device UID string.
     func matches(uid: String) -> Bool {
         let uppercaseUID = uid.uppercased()

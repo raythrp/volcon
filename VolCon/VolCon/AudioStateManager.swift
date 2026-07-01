@@ -6,6 +6,7 @@ class AudioStateManager {
 
     private var internalCachedSubDevices: [AudioDeviceID] = []
     private let queue = DispatchQueue(label: "com.volcon.audiostate", attributes: .concurrent)
+    private var observedVolumeDeviceID: AudioDeviceID = 0
 
     var cachedSubDevices: [AudioDeviceID] {
         get { queue.sync { internalCachedSubDevices } }
@@ -38,8 +39,32 @@ class AudioStateManager {
             }
         }
 
+        // For built-in keyboard (fallback fingerprint), find sub-device with built-in transport type.
+        // Needed because macOS built-in speaker UIDs (e.g. "AppleHDAEngineOutput:1B,0,1,1:0")
+        // don't contain "BuiltIn", so string matching above fails.
+        if fingerprint.isBuiltIn {
+            for deviceID in devices {
+                if getTransportType(deviceID) == kAudioDeviceTransportTypeBuiltIn {
+                    print("VolCon: resolveDevice — matched built-in transport → \(deviceID)")
+                    return deviceID
+                }
+            }
+        }
+
         print("VolCon: No fingerprint match — falling back to first sub-device \(devices[0])")
         return devices.first
+    }
+
+    private func getTransportType(_ deviceID: AudioDeviceID) -> UInt32 {
+        var transportType: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &transportType)
+        return transportType
     }
 
     func getDeviceUID(_ deviceID: AudioDeviceID) -> String? {
@@ -84,6 +109,42 @@ class AudioStateManager {
         } else {
             cachedSubDevices = [defaultOutputID]
             print("VolCon: Standard physical device selected: \(defaultOutputID)")
+        }
+
+        addVolumeChangeListener(for: defaultOutputID)
+    }
+
+    // Listens to CoreAudio volume changes on the default output device and posts
+    // .volumeDidChange — this covers Bluetooth headset buttons (AVRCP-handled by macOS,
+    // never seen by HIDMonitor) and any path where VolumeExecutor returns early.
+    private func addVolumeChangeListener(for deviceID: AudioDeviceID) {
+        observedVolumeDeviceID = deviceID
+        for element: AudioObjectPropertyElement in [kAudioObjectPropertyElementMain, 1] {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyVolumeScalar,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: element
+            )
+            AudioObjectAddPropertyListenerBlock(deviceID, &address, DispatchQueue.main) { [weak self] _, _ in
+                guard let self = self, deviceID == self.observedVolumeDeviceID else { return }
+                self.postCurrentVolume(for: deviceID)
+            }
+        }
+    }
+
+    private func postCurrentVolume(for deviceID: AudioDeviceID) {
+        for element: AudioObjectPropertyElement in [kAudioObjectPropertyElementMain, 1] {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyVolumeScalar,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: element
+            )
+            var volume: Float32 = 0
+            var size = UInt32(MemoryLayout<Float32>.size)
+            if AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &volume) == noErr {
+                NotificationCenter.default.post(name: .volumeDidChange, object: nil, userInfo: ["volume": volume])
+                return
+            }
         }
     }
 
