@@ -65,6 +65,9 @@ class MultiOutputManager {
             return
         }
 
+        // Members already in the group before this change — leave their volume alone.
+        let previousMembers = findGroup() != nil ? Set(currentMemberUIDs()) : []
+
         let group: AudioDeviceID
         if let existing = findGroup() {
             setSubDeviceList(uids, on: existing)
@@ -79,9 +82,73 @@ class MultiOutputManager {
 
         setDefaultOutput(group)
 
+        // Escape the inherited 0%: a newly joined device may carry the built-in speaker's
+        // 0% system volume. Bump only NEWLY added members' OWN scalar to an audible floor —
+        // never existing members (avoids jolting their volume), and never any aggregate-level
+        // main volume (which macOS would hijack for native cross-device key handling).
+        let addedMembers = Set(uids).subtracting(previousMembers)
+        ensureMembersAudible(addedMembers)
+
         // In-place sub-device edits on an already-default aggregate don't fire the
         // default-output listener; refresh the cache directly so routing stays correct.
         AudioStateManager.shared.refresh()
+    }
+
+    // Raises a newly joined device's own volume to an audible floor if it's stuck
+    // near 0 (inherited from the built-in speaker's 0%). Only touches the passed-in
+    // members, so devices already in the group keep their current volume.
+    private func ensureMembersAudible(_ addedUIDs: Set<String>) {
+        let floor: Float32 = 0.2
+        for uid in addedUIDs {
+            guard let dev = AudioStateManager.shared.realDevice(forUID: uid) else { continue }
+            let current = readDeviceVolume(dev)
+            print("VolCon: audible — device \(dev) scalar=\(current ?? -1)")
+            if let cur = current, cur < 0.1 {
+                setDeviceVolume(dev, floor)
+                print("VolCon: audible — raised device \(dev) to \(floor)")
+            }
+        }
+    }
+
+    // Reads a device's true output volume: the max across master (0) and L/R (1,2).
+    // A device whose real volume is on L/R can report 0 on the master channel, so
+    // reading only master would falsely look silent.
+    private func readDeviceVolume(_ deviceID: AudioDeviceID) -> Float32? {
+        var found = false
+        var maxVol: Float32 = 0
+        for element: AudioObjectPropertyElement in [kAudioObjectPropertyElementMain, 1, 2] {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyVolumeScalar,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: element
+            )
+            var vol: Float32 = 0
+            var size = UInt32(MemoryLayout<Float32>.size)
+            if AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &vol) == noErr {
+                found = true
+                maxVol = max(maxVol, vol)
+            }
+        }
+        return found ? maxVol : nil
+    }
+
+    // Writes a device's output volume across whatever channels are settable
+    // (master, else L/R) — mirrors VolumeExecutor's channel handling.
+    private func setDeviceVolume(_ deviceID: AudioDeviceID, _ value: Float32) {
+        for element: AudioObjectPropertyElement in [kAudioObjectPropertyElementMain, 1, 2] {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyVolumeScalar,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: element
+            )
+            var settable: DarwinBoolean = false
+            guard AudioObjectIsPropertySettable(deviceID, &address, &settable) == noErr, settable.boolValue else {
+                continue
+            }
+            var vol = value
+            AudioObjectSetPropertyData(deviceID, &address, 0, nil, UInt32(MemoryLayout<Float32>.size), &vol)
+            if element == kAudioObjectPropertyElementMain { return } // master covers all channels
+        }
     }
 
     // MARK: - Group lifecycle

@@ -25,21 +25,19 @@ class HIDMonitor {
         let matches: [CFDictionary] = [
             createMatchingDictionary(page: 0x07, usage: 0x01), // Keyboard
             createMatchingDictionary(page: 0x07, usage: 0x06), // Keyboard (alternate primary)
-            createMatchingDictionary(page: 0x0C, usage: 0x01), // Consumer Control (Bluetooth headphones)
+            createMatchingDictionary(page: 0x0C, usage: 0x01), // Consumer Control (headset buttons)
         ]
         IOHIDManagerSetDeviceMatchingMultiple(hidManager, matches as CFArray)
 
         let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
 
-        // Debug: log every device IOKit matches so we can confirm the headphone is seen
-        IOHIDManagerRegisterDeviceMatchingCallback(hidManager, { ctx, _, _, device in
+        IOHIDManagerRegisterDeviceMatchingCallback(hidManager, { _, _, _, device in
             let name = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "Unknown"
             let transport = IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? "?"
             print("VolCon: HID device matched — '\(name)' [\(transport)]")
         }, context)
 
         IOHIDManagerRegisterInputValueCallback(hidManager, hidValueCallback, context)
-
         IOHIDManagerScheduleWithRunLoop(hidManager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
 
         let result = IOHIDManagerOpen(hidManager, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -74,20 +72,18 @@ class HIDMonitor {
     }
 }
 
-let hidValueCallback: IOHIDValueCallback = { context, result, sender, value in
+let hidValueCallback: IOHIDValueCallback = { context, _, _, value in
     guard let context = context else { return }
     let monitor = Unmanaged<HIDMonitor>.fromOpaque(context).takeUnretainedValue()
 
     let element = IOHIDValueGetElement(value)
     let usagePage = IOHIDElementGetUsagePage(element)
     let usage = IOHIDElementGetUsage(element)
-    let intValue = IOHIDValueGetIntegerValue(value)
 
     // Only process key press (1), ignore release (0)
-    guard intValue == 1 else { return }
+    guard IOHIDValueGetIntegerValue(value) == 1 else { return }
 
     var direction: VolumeExecutor.VolumeDirection?
-
     if usagePage == 0x07 { // Keyboard page
         if usage == 0x80 { direction = .up }
         else if usage == 0x81 { direction = .down }
@@ -100,7 +96,6 @@ let hidValueCallback: IOHIDValueCallback = { context, result, sender, value in
 
     let device = IOHIDElementGetDevice(element)
     let fingerprint = monitor.extractFingerprint(from: device)
-
     VolumeExecutor.shared.executeVolumeChange(direction: dir, for: fingerprint)
 }
 
@@ -119,5 +114,5 @@ extension HIDMonitor {
         } else {
             return .fallback("BuiltIn")
         }
-    }
+    }
 }
