@@ -13,7 +13,7 @@ struct VolConApp: App {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem?
     private var volumeResetTimer: Timer?
 
@@ -67,12 +67,60 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem?.button {
             button.image = NSImage(systemSymbolName: "speaker.wave.3.fill", accessibilityDescription: "VolCon")
         }
-        
+
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "VolCon is Active", action: nil, keyEquivalent: ""))
+        menu.delegate = self
+        statusItem?.menu = menu
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        rebuildMenu(menu)
+    }
+
+    // Rebuilds the menu each time it opens so the device list and checkmarks
+    // reflect live state (connected devices + current group membership).
+    private func rebuildMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let activeItem = NSMenuItem(title: "VolCon is Active", action: nil, keyEquivalent: "")
+        activeItem.isEnabled = false
+        menu.addItem(activeItem)
+        menu.addItem(NSMenuItem.separator())
+
+        let header = NSMenuItem(title: "Output Devices", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+
+        let devices = MultiOutputManager.shared.listOutputDevices()
+        let members = Set(MultiOutputManager.shared.currentMemberUIDs())
+
+        if devices.isEmpty {
+            let empty = NSMenuItem(title: "No output devices found", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        } else {
+            for device in devices {
+                let item = NSMenuItem(title: device.name, action: #selector(toggleDevice(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = device.uid
+                item.state = members.contains(device.uid) ? .on : .off
+                menu.addItem(item)
+            }
+        }
+
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit VolCon", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        statusItem?.menu = menu
+    }
+
+    @objc private func toggleDevice(_ sender: NSMenuItem) {
+        guard let uid = sender.representedObject as? String else { return }
+        var members = Set(MultiOutputManager.shared.currentMemberUIDs())
+        if members.contains(uid) {
+            members.remove(uid)
+        } else {
+            members.insert(uid)
+        }
+        MultiOutputManager.shared.setMembers(Array(members))
     }
     
     private func requestAccessibilityPermissions() {

@@ -29,35 +29,69 @@ class VolumeExecutor {
             return
         }
         
-        let step: Float32 = 0.06 // Roughly 1/16th of volume bar
+        let step: Float32 = 0.04 // ~1/25th of volume bar per keypress
         var finalVolume: Float32 = 0
+        var anyChannelSet = false
 
         // 3. Apply new volume to all supported channels
         for channel in channels {
-            var address = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyVolumeScalar,
-                mScope: kAudioDevicePropertyScopeOutput,
-                mElement: channel
-            )
-
-            var size: UInt32 = UInt32(MemoryLayout<Float32>.size)
-            var currentVolume: Float32 = 0.0
-
-            let status = AudioObjectGetPropertyData(targetDeviceID, &address, 0, nil, &size, &currentVolume)
-            guard status == noErr else { continue }
-
-            var newVolume = currentVolume
-            if direction == .up {
-                newVolume = min(1.0, currentVolume + step)
-            } else if direction == .down {
-                newVolume = max(0.0, currentVolume - step)
+            if applyVolume(to: targetDeviceID, channel: channel, direction: direction, step: step, result: &finalVolume) {
+                anyChannelSet = true
             }
+        }
 
-            AudioObjectSetPropertyData(targetDeviceID, &address, 0, nil, size, &newVolume)
-            finalVolume = newVolume
+        // Master (channel 0) can report as settable yet reject the set with 'nope'
+        // (common on aggregate sub-devices). Fall back to the L/R channels.
+        if !anyChannelSet && channels == [kAudioObjectPropertyElementMain] {
+            print("VolCon: master-channel set failed — falling back to L/R channels")
+            for channel: AudioObjectPropertyElement in [1, 2] {
+                if applyVolume(to: targetDeviceID, channel: channel, direction: direction, step: step, result: &finalVolume) {
+                    anyChannelSet = true
+                }
+            }
+        }
+
+        guard anyChannelSet else {
+            print("VolCon: no channel accepted the volume set on \(targetDeviceID)")
+            return
         }
 
         NotificationCenter.default.post(name: .volumeDidChange, object: nil, userInfo: ["volume": finalVolume])
+    }
+
+    // Reads, steps, and writes the volume for one channel. Returns true only if the
+    // set actually succeeded (status noErr), so callers can detect 'nope' rejections.
+    private func applyVolume(to deviceID: AudioDeviceID,
+                             channel: AudioObjectPropertyElement,
+                             direction: VolumeDirection,
+                             step: Float32,
+                             result finalVolume: inout Float32) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: channel
+        )
+
+        var size = UInt32(MemoryLayout<Float32>.size)
+        var currentVolume: Float32 = 0.0
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &currentVolume) == noErr else {
+            return false
+        }
+
+        var newVolume = currentVolume
+        if direction == .up {
+            newVolume = min(1.0, currentVolume + step)
+        } else if direction == .down {
+            newVolume = max(0.0, currentVolume - step)
+        }
+
+        let status = AudioObjectSetPropertyData(deviceID, &address, 0, nil, size, &newVolume)
+        if status != noErr {
+            print("VolCon: set VolumeScalar failed on device \(deviceID) channel \(channel): \(status)")
+            return false
+        }
+        finalVolume = newVolume
+        return true
     }
     
     private func getChannelsWithVolumeSupport(for deviceID: AudioDeviceID) -> [AudioObjectPropertyElement] {

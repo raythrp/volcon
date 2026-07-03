@@ -35,7 +35,10 @@ class AudioStateManager {
             print("  Checking sub-device \(deviceID) uid='\(uid)'")
             if fingerprint.matches(uid: uid) {
                 print("  → Matched!")
-                return deviceID
+                // The IDs in ActiveSubDeviceList can be the aggregate's proxy sub-device
+                // objects, which reject VolumeScalar sets ('nope'). Translate the UID to the
+                // real hardware AudioDeviceID and control that instead.
+                return realDevice(forUID: uid) ?? deviceID
             }
         }
 
@@ -67,6 +70,38 @@ class AudioStateManager {
         return transportType
     }
 
+    // Translates a device UID string to its real hardware AudioDeviceID via the
+    // system object. Returns nil if unknown. Used to bypass aggregate proxy
+    // sub-device objects that reject direct VolumeScalar sets.
+    func realDevice(forUID uid: String) -> AudioDeviceID? {
+        var cfUID = uid as CFString
+        var deviceID: AudioDeviceID = 0
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDeviceForUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(MemoryLayout<AudioValueTranslation>.size)
+
+        // The translation struct holds raw pointers into cfUID/deviceID; keep both alive
+        // for the whole call via nested withUnsafeMutablePointer.
+        let status = withUnsafeMutablePointer(to: &cfUID) { inPtr in
+            withUnsafeMutablePointer(to: &deviceID) { outPtr -> OSStatus in
+                var translation = AudioValueTranslation(
+                    mInputData: UnsafeMutableRawPointer(inPtr),
+                    mInputDataSize: UInt32(MemoryLayout<CFString>.size),
+                    mOutputData: UnsafeMutableRawPointer(outPtr),
+                    mOutputDataSize: UInt32(MemoryLayout<AudioDeviceID>.size)
+                )
+                return AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
+                                                  &address, 0, nil, &size, &translation)
+            }
+        }
+        guard status == noErr, deviceID != 0 else { return nil }
+        print("VolCon: realDevice — '\(uid)' → \(deviceID)")
+        return deviceID
+    }
+
     func getDeviceUID(_ deviceID: AudioDeviceID) -> String? {
         var uid: CFString = "" as CFString
         var size = UInt32(MemoryLayout<CFString>.size)
@@ -77,6 +112,14 @@ class AudioStateManager {
         )
         guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &uid) == noErr else { return nil }
         return uid as String
+    }
+
+    // Forces an immediate re-read of the active device and its sub-devices.
+    // Needed after in-place aggregate membership edits: changing an already-default
+    // aggregate's sub-device list does not fire the default-output listener, so the
+    // cache would otherwise stay stale and misroute volume keys.
+    func refresh() {
+        updateActiveDevice()
     }
 
     private func updateActiveDevice() {

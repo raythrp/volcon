@@ -119,5 +119,5 @@ extension HIDMonitor {
         } else {
             return .fallback("BuiltIn")
         }
-    }
+    }
 }
