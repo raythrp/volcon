@@ -21,13 +21,14 @@ class MultiOutputManager {
     // MARK: - Public API
 
     /// Physical output devices eligible for the group: has output streams, not the
-    /// built-in speaker, not an aggregate (incl. our own group).
+    /// built-in speaker, not an aggregate (incl. our own group). The aux/headphone
+    /// jack ("External Headphones") is also BuiltIn transport but is a distinct,
+    /// selectable device — only the speaker itself is excluded.
     func listOutputDevices() -> [OutputDevice] {
         return allDevices().compactMap { deviceID -> OutputDevice? in
             guard hasOutputStreams(deviceID) else { return nil }
-            let transport = getTransportType(deviceID)
-            guard transport != kAudioDeviceTransportTypeBuiltIn,
-                  transport != kAudioDeviceTransportTypeAggregate else { return nil }
+            guard getTransportType(deviceID) != kAudioDeviceTransportTypeAggregate else { return nil }
+            guard !isBuiltInSpeaker(deviceID) else { return nil }
             guard let uid = getDeviceUID(deviceID), uid != groupUID else { return nil }
             return OutputDevice(id: deviceID, uid: uid, name: getDeviceName(deviceID) ?? uid)
         }
@@ -221,8 +222,19 @@ class MultiOutputManager {
 
     private func builtInOutputDevice() -> AudioDeviceID? {
         return allDevices().first {
-            hasOutputStreams($0) && getTransportType($0) == kAudioDeviceTransportTypeBuiltIn
+            hasOutputStreams($0) && isBuiltInSpeaker($0)
         }
+    }
+
+    /// The internal speaker specifically. The aux/headphone jack is also BuiltIn
+    /// transport, so distinguish by UID/name — macOS names the speaker
+    /// "BuiltInSpeakerDevice" / "…Speakers", the jack "External Headphones".
+    private func isBuiltInSpeaker(_ deviceID: AudioDeviceID) -> Bool {
+        guard getTransportType(deviceID) == kAudioDeviceTransportTypeBuiltIn else { return false }
+        let uid = getDeviceUID(deviceID) ?? ""
+        let name = getDeviceName(deviceID) ?? ""
+        return uid.localizedCaseInsensitiveContains("Speaker")
+            || name.localizedCaseInsensitiveContains("Speaker")
     }
 
     // MARK: - CoreAudio helpers

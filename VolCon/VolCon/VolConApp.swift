@@ -55,17 +55,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Resting menu bar glyph — custom volume-knob template image.
+    private func menuBarIcon() -> NSImage? {
+        let image = NSImage(named: "MenuBarIcon")
+        image?.isTemplate = true
+        image?.size = NSSize(width: 18, height: 18)
+        return image
+    }
+
     private func resetMenuBarIcon() {
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "speaker.wave.3.fill", accessibilityDescription: "VolCon")
+            button.image = menuBarIcon()
             button.title = ""
         }
     }
-    
+
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "speaker.wave.3.fill", accessibilityDescription: "VolCon")
+            button.image = menuBarIcon()
         }
 
         let menu = NSMenu()
