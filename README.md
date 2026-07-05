@@ -8,8 +8,8 @@ Normally, macOS disables volume controls for Multi-Output devices. VolCon runs s
 
 ## Features
 - **Zero-Latency Adjustments**: Event-driven architecture ensures instant volume changes.
-- **Hardware Agnostic**: Reliably maps devices via hardware fingerprints (Bluetooth MAC / USB VID/PID) instead of fragile string names.
-- **Background Operation**: Runs strictly as an accessory (menu bar only) with minimal system footprint.
+- **Hardware Agnostic**: Reliably maps devices via hardware fingerprints (Bluetooth MAC / USB VID/PID).
+- **Background Operation**: Runs strictly as an accessory (menu bar only).
 
 ## Download
 
